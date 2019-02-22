@@ -1,0 +1,412 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: smoketest-pipeline-template
+message: Created jenkins pipeline to run somoketest on ${SMOKETEST_PROJECT_NAME}
+metadata:
+  annotations:
+    description: Created jenkins pipeline to run somoketest on ${SMOKETEST_PROJECT_NAME}
+  creationTimestamp: null
+  name: pipeline-promote-to-pro
+objects:
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+      openshift.io/generated-by: OpenShiftNewBuild
+    creationTimestamp: null
+    labels:
+      app: pipeline-promote-to-pro
+    name: pipeline-promote-to-pro
+  spec:
+    failedBuildsHistoryLimit: 5
+    nodeSelector: null
+    runPolicy: Serial
+    source:
+      type: None
+    strategy:
+      jenkinsPipelineStrategy:
+        jenkinsfile: |-
+          def get_name_running_pod (app_name){
+             for (i = 0; i < 300; i++){
+                pod_name = sh(returnStdout: true, script: "oc get pod | awk '/^${app_name}/ && /Running/ && !/build/ && !/deploy/ {print \$1}'").trim()
+                if (pod_name?.trim()) {
+                   return pod_name
+                 }
+                sleep 2
+             }
+             throw new Exception("Could not get the pod name within 10 min")
+          }//def
+
+          //return true if pod is completely stoped
+          def stop_pod (app_name) {
+             sh "oc scale --replicas=0 dc ${app_name}"
+             for (i = 0; i < 300; i++){
+                pod_name = sh(returnStdout: true, script: "oc get pod | awk '/^${app_name}/ && !/build/ && !/deploy/ {print \$1}'").trim()
+                if (!pod_name?.trim()) {
+                   return true
+                 }
+                sleep 2
+             }
+
+            throw new Exception("Could not stop the pod within 10 min")
+
+          }//def
+
+          def delete_project(project_name) {
+            echo "Running delete_project function ${project_name}"
+            // need to scale down pods to avoid problem with "terminating" projects after deletion
+            try {
+              //def dc_names = (sh(returnStdout: true, script: "oc get dc | awk '!/NAME/{print \$1}'").trim()).split()
+              //if (dc_names.size() >0) {
+                //for (def dc_name: dc_names) {
+                 //sh "oc scale --replicas=0 dc ${dc_name}"
+                  //if (dc_name?.trim() && dc_name?.trim() != 'No resources found.'){
+                  openshift.withProject('${SMOKETEST_PROJECT_NAME}') {
+                    if(openshift.selector("dc", "${SMOKETEST_APP_NAME}").exists()) {
+                      echo "Stoping pod in the project"
+                      //wait until pod is stoped
+                       stop_pod('${SMOKETEST_APP_NAME}')
+                    }//if
+                  }//withProject
+                 //wait until pod is stoped
+                 //if (stop_pod('${dc_name}')) {
+                   //continue
+                  //}//if
+                //}//for
+              //}//if
+              sh "oc delete project ${project_name}"
+            }catch(e) {
+              echo "Exception ${e}"
+            }//catch
+          }//delete_project
+
+          //retur 1 if single test failed
+          def run_httptest(test_name, url){
+            def response =''
+            try {
+               response = sh(returnStdout: true, script: "curl ${url} -s").trim()
+            }catch(e){
+              echo ("Exceptin ${e}")
+            }
+            
+            if (response == "Online") 
+            {
+               echo "${test_name} SUCCESS"
+               return 0
+            }else{
+               echo "${test_name} FAIL"
+               echo ("response ${response}")
+               return 1
+            }
+          }
+
+          //this is customom implementation of readiness of service/routing
+          //returns elapsed time to get Online  from http service
+          def get_ready_status_from_http_service (url) {
+             def elapsed_time = 1
+             for (i = 0; i <300; i++){
+                if (run_httptest("REDINESS TEST",url) == 0) {
+                   return elapsed_time
+                 }//if
+                sleep 2
+                elapsed_time += 2
+             }//for
+            throw new Exception("Could not get ready status within 10 min")
+          }//def
+          
+
+
+          node('master') {
+            def smoketest_php_is_template_str='''
+            apiVersion: v1
+            kind: Template
+            metadata:
+              creationTimestamp: null
+              name: smoketest-php-is-template
+            objects:
+            - apiVersion: v1
+              kind: ImageStream
+              metadata:
+                annotations:
+                  openshift.io/generated-by: OpenShiftNewApp
+                creationTimestamp: null
+                generation: 1
+                labels:
+                  app: smoketest-php
+                name: smoketest-php
+              spec:
+                lookupPolicy:
+                  local: false
+                tags:
+                - annotations: null
+                  from:
+                    kind: DockerImage
+                    name: docker-registry.default.svc:5000/smoketest/smoketest-php:latest
+                  generation: null
+                  importPolicy: {}
+                  name: latest
+                  referencePolicy:
+                    type: ""
+            '''
+            def smoketest_php_bc_template_str='''
+            apiVersion: v1
+            kind: Template
+            metadata:
+              creationTimestamp: null
+              name: smoketest-php-bc-template
+            objects:
+            - apiVersion: v1
+              kind: BuildConfig
+              metadata:
+                annotations:
+                  openshift.io/generated-by: OpenShiftNewApp
+                creationTimestamp: null
+                labels:
+                  app: smoketest-php
+                name: smoketest-php
+              spec:
+                failedBuildsHistoryLimit: 5
+                nodeSelector: null
+                output:
+                  to:
+                    kind: ImageStreamTag
+                    name: smoketest-php:latest
+                postCommit: {}
+                resources: {}
+                runPolicy: Serial
+                source:
+                  git:
+                    uri: ${GIT_HUB_URL}
+                  type: Git
+                strategy:
+                  sourceStrategy:
+                    from:
+                      kind: ImageStreamTag
+                      name: php:7.0
+                      namespace: openshift
+                  type: Source
+                successfulBuildsHistoryLimit: 5
+                triggers:
+                - github:
+                    secret: JmdhcqbUUPUqvn_Kjxce
+                  type: GitHub
+                - generic:
+                    secret: hb31CacZCpG7qdG2wR6N
+                  type: Generic
+                - type: ConfigChange
+                - imageChange: {}
+                  type: ImageChange
+              status:
+                lastVersion: 0
+            '''
+
+            stage ("Input user token and amount of tests") {
+              user_input = input(
+              id: 'userInput', message: 'Please enter your admin token (oc whoami -t) and update amount of tests if needed',
+                parameters: [
+                        string(defaultValue: '',
+                                description: 'Admin token is required to create project ${SMOKETEST_PROJECT_NAME}',
+                                name: 'token'),
+                        string(defaultValue: '45',
+                                description: 'Amoutn of tests',
+                                name: 'amount_of_tests'),
+                        string(defaultValue: '1',
+                                description: 'Sleep time (in sec)',
+                                name: 'sleep_time')
+                ])
+            }//stage
+
+            stage ('Check if project ${SMOKETEST_PROJECT_NAME} exists') {
+              openshift.withCluster() {
+                    openshift.withCredentials(user_input.token) {
+                       try {
+                         //openshift.withProject('${SMOKETEST_PROJECT_NAME}') {
+                          def project = openshift.project()
+                          echo "Current project ${project}"
+                          sh "oc login --insecure-skip-tls-verify --token ${user_input.token} ${MASTER_SERVER_URL_SOURCE}"
+                          //this command just to test if project exixs or not
+                          sh "oc project ${SMOKETEST_PROJECT_NAME}"
+                          input "Project ${SMOKETEST_PROJECT_NAME}  already exists, do you want delete it?"
+                          delete_project('${SMOKETEST_PROJECT_NAME}')
+                          sleep 10
+                       }catch(e){
+
+                          //echo "${e}"
+
+                       }//catch
+                    }//withCredentials
+              }//withCluster
+            }//stage
+            
+            stage ('Create project ${SMOKETEST_PROJECT_NAME}') {
+              openshift.withCluster() {
+                    openshift.withCredentials(user_input.token) {
+                      openshift.newProject('${SMOKETEST_PROJECT_NAME}')
+                    }//withCredentials
+              }//withCluster
+            }//stage
+            
+            stage ("Build s2i image") {
+              openshift.withCluster() {
+                openshift.withCredentials(user_input.token){
+                 openshift.withProject('${SMOKETEST_PROJECT_NAME}'){
+                   //create image stream from template
+                   openshift.create(openshift.process(smoketest_php_is_template_str))
+                   //create build conf from template
+                   //build starts autmatically
+                   def s2i_build = openshift.create(openshift.process(smoketest_php_bc_template_str))
+                   def bc = s2i_build.narrow('bc')
+                   //bc.startBuild()
+                   def builds = bc.related('builds')
+                   
+                   // wait at most 5 minutes for the build to complete
+                   //somethinf is wrong with it.object().status.phase == 'Complete' ...need to check
+                   timeout(5){
+                      builds.untilEach(1) {
+                        return it.object().status.phase == 'Complete'
+                      }//untilEach
+                   }//timeout
+                  
+               }//withProject
+              }//withCredentials
+             }//withCluster
+            }//stage
+
+            stage ("Deploy application") {
+              openshift.withCluster() {
+               openshift.withCredentials(user_input.token){
+                  openshift.withProject('${SMOKETEST_PROJECT_NAME}') {
+                    def dcs = openshift.newApp('smoketest-php').narrow('dc')
+                  }//withProject
+                }//withCredentials
+              }//withCluster
+            }//stage
+            
+            smoke_test_pod_name=''
+
+            stage ("Set volume claim,update html files on pod") {
+               
+               //sh "oc login --insecure-skip-tls-verify --token ${user_input.token} ${MASTER_SERVER_URL_SOURCE}"
+               sh "oc project ${SMOKETEST_PROJECT_NAME}"
+               //bind pvc
+                sh """oc set volume dc/smoketest-php --add --overwrite --name=smoketest-php-volume-1 -t pvc \
+                --claim-name=smoketest-pvc --claim-size=5Gi --claim-mode='ReadWriteMany' --mount-path=/opt/app-root/src/html/pv || true"""
+             
+               //waiting to start the pod
+               smoke_test_pod_name = get_name_running_pod('${SMOKETEST_APP_NAME}')
+               echo "smoke_test_pod_name ${smoke_test_pod_name}"
+               sh 'oc expose svc smoketest-php'
+               sh "echo 'Online' > /tmp/index.html"
+               sh "oc cp /tmp/index.html ${smoke_test_pod_name}:/opt/app-root/src/"
+               sh "oc cp /tmp/index.html ${smoke_test_pod_name}:/opt/app-root/src/html/pv/"
+               //wait php server
+               //sleep 60
+            }//stage
+
+            livenesstest_fail_counter = 0
+            readiness_time1 = 0
+            service_url = '${SMOKETEST_APP_NAME}-${SMOKETEST_PROJECT_NAME}.apps.ocpt1.sos.eu'
+            pvctest_fail_counter=0
+            stage ("Run liveness test"){
+            //waits until service is ready
+            readiness_time1 = get_ready_status_from_http_service(service_url)
+              for (i = 1; i <= user_input.amount_of_tests.toInteger(); i++){
+                 echo "Test number ${i}"
+                 livenesstest_fail_counter += run_httptest('LIVENESS TEST',service_url)
+                 sleep user_input.sleep_time.toInteger()
+              }//each
+            }//stage
+
+            //Delete the pod to verify the data is stil in the PV after new pod is re-created by RC
+            sh "oc delete pod ${smoke_test_pod_name}"
+            //With next command  waiting until the pod is up and runnig agian
+            echo ("Waiting until the pod is up and runnig agian")
+            def new_smoke_test_pod_name = get_name_running_pod('${SMOKETEST_APP_NAME}')
+            echo ("New pod name ${new_smoke_test_pod_name}")
+            sh "echo 'Online' > /tmp/index.html"
+            sh "oc cp /tmp/index.html ${new_smoke_test_pod_name}:/opt/app-root/src/"
+          
+            stage ("Run pv test") {
+            //wait until service is ready
+            readiness_time2= get_ready_status_from_http_service(service_url)
+              for (i = 1; i <= user_input.amount_of_tests.toInteger(); i++){
+                 echo "Test number ${i}"
+                 pvctest_fail_counter += run_httptest('PV TEST','${SMOKETEST_APP_NAME}-${SMOKETEST_PROJECT_NAME}.apps.ocpt1.sos.eu/html/pv/index.html')
+                 sleep user_input.sleep_time.toInteger()
+              }//each
+            
+            }//stage
+          
+            stage ("Delete project  ${SMOKETEST_PROJECT_NAME}") {
+              openshift.withCluster() {
+               openshift.withCredentials(user_input.token){
+                  openshift.withProject('${SMOKETEST_PROJECT_NAME}') {
+                    //delete_project('${SMOKETEST_PROJECT_NAME}')
+                  }//withProject
+                }//withCredentials
+              }//withCluster
+            }
+            
+            stage ("Status smoketest"){
+              
+              echo "Service/Route readiness_time1 in sec = ${readiness_time1}"
+              echo "Service/Route readiness_time2 in sec = ${readiness_time2}"
+              if ((pvctest_fail_counter+livenesstest_fail_counter) == 0){
+                echo "100% SMOKETESTS SUCCCESS"
+              }
+             
+              if (pvctest_fail_counter > 0){
+                echo "${pvctest_fail_counter} pvc tests failed from ${user_input.amount_of_tests}"
+              }
+             
+              if (livenesstest_fail_counter > 0){
+                echo "${livenesstest_fail_counter} livenes tests failed from ${user_input.amount_of_tests}"
+              }
+              
+              //if more than total 51% failed tests 
+              def percentage_failed=((pvctest_fail_counter+livenesstest_fail_counter)*100)/(2*user_input.amount_of_tests.toInteger())
+              
+              if (percentage_failed > 51){
+                echo ("Percentage failed tests ${percentage_failed}")
+                 currentBuild.result = 'FAILURE'
+              }else{ 
+                currentBuild.result = 'SUCCESS'
+              }
+
+            }//stage
+           
+           }//node
+           
+
+        type: JenkinsPipeline
+    successfulBuildsHistoryLimit: 5
+    triggers:
+    - github:
+        secret: pG5-8S1Gb7sQtm7qHwqh
+      type: GitHub
+    - generic:
+        secret: ZiQLARR-YCMCTWpA-yVd
+      type: Generic
+    - type: ConfigChange
+parameters:
+
+  - name: SMOKETEST_PROJECT_NAME
+    description: Smoketest project name
+    required: true
+
+  - name: MASTER_SERVER_URL_SOURCE
+    description: Registry URL
+    required: true
+    value: https://master.ocpt1.sos.eu:8443
+
+  - name: SMOKETEST_APP_NAME
+    description: Application name
+    required: true
+    value: smoketest-php
+  
+  - name: GIT_HUB_URL
+    description: Git hub url
+    required: true
+    value: https://github.com/openshift/sti-php
+

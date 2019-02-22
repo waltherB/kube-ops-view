@@ -1,0 +1,23 @@
+---
+# This playbook deploys the whole application stack in this site.
+#Update12
+- name: Trigguer list of roles sent from Service Dialog using extra_var roles
+  hosts: all
+  connection: local
+  environment:
+    ansible_host_key_checking: false
+  remote_user: root
+  pre_tasks:
+    - name: logging manageiq object
+      debug: var=manageiq
+      when: manageiq is defined
+    - name: Logging cfmeroles
+      debug: var=rolescfme
+  vars:
+     isadmin: False
+
+  roles:
+    - { role: create-project-ocp, when: '"create-project-ocp" in rolescfme.split(",")' }
+    - { role: add-user-project-ocp, when: '"add-user-project-ocp" in rolescfme.split(",")' }
+    - { role: promote-project-ocp, when: '"promote-project-ocp" in rolescfme.split(",")' }
+#    - { role: icd17, when: '"icd17" in rolescfme.split(",")' }

@@ -1,0 +1,81 @@
+# Playbook to create container spaces.
+
+---
+- name: List Role
+  debug: var=rolescfme
+
+- name: OCP ProjectAdmin User Name
+  debug: var=user
+
+- name: OCP Project Name
+  debug: var=projectname
+
+- name: OCP Env
+  debug: var=ocpenv
+
+- name: OCP Root
+  debug: var=root_required
+
+- name: Add Jenkins
+  debug: var=addjenkins
+
+- name: OCPT1 Token
+  debug: var=token_t1
+
+- name: OCPP1 Token
+  debug: var=token_p1
+
+- name: OCPP2
+  debug: var=token_p2
+
+# Not required - playbook will be executed on ocp_bastion host where
+# oc is logged in as system:admin
+#- name: login to OpenShift
+#  shell: "/root/oc login --insecure-skip-tls-verify=true  https://openshift.{{ hailstorm_dns_domain }}/"
+#  shell: "/root/oc login --insecure-skip-tls-verify=true --token=_2weB6JERB70OdFmzfHcBBKv0wjoVxzT-qK3YPwAFXc  https://openshift.{{ hailstorm_dns_domain }}/"
+
+
+
+
+- name: login to OpenShift OCP T1
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_t1 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocpt1.sos.eu"
+
+- name: login to OpenShift OCP P1
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_p1 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocp1.sos.eu"
+
+- name: login to OpenShift OCP P2
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_p2 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocp2.sos.eu"
+
+- name: Create OpenShift container project
+  shell: "oc new-project {{ projectname }}"
+
+- name: assign admin permissions to user
+  shell: "oc adm policy add-role-to-user admin {{ user }} -n {{ projectname }}"
+
+- name: assign anyuid to default service account if root requested
+  shell: "oc adm policy add-scc-to-user anyuid -z default -n {{ projectname }}"
+  when: root_required  == "true"
+
+- name: Add nodeSelector to project to pin containers to nodes of the requested Zone
+  shell: oc patch namespace {{ projectname }} --patch '{ "metadata":{"annotations":{"openshift.io/node-selector":"region=compute" }}}'
+
+- name: Deploy Jenkins Pipeline for promote to dev
+  shell: "oc process -f /var/lib/awx/projects/_7__sos_git/ocp_templates/smoketest_pipline_template_v2_eumartin_dev.yml SMOKETEST_PROJECT_NAME=smoketest | oc create -n {{ projectname }} -f-"
+  when: addjenkins == "true"
+
+- name: Deploy Jenkins Pipeline for promote to uat
+  shell: "oc process -f /var/lib/awx/projects/_7__sos_git/ocp_templates/smoketest_pipline_template_v2_eumartin_uat.yml SMOKETEST_PROJECT_NAME=smoketest | oc create -n {{ projectname }} -f-"
+  when: addjenkins == "true"
+
+- name: Deploy Jenkins Pipeline for promote to pre
+  shell: "oc process -f /var/lib/awx/projects/_7__sos_git/ocp_templates/smoketest_pipline_template_v2_eumartin_pre.yml SMOKETEST_PROJECT_NAME=smoketest | oc create -n {{ projectname }} -f-"
+  when: addjenkins == "true"
+
+- name: Deploy Jenkins Pipeline for promote to pro
+  shell: "oc process -f /var/lib/awx/projects/_7__sos_git/ocp_templates/smoketest_pipline_template_v2_eumartin_pro.yml SMOKETEST_PROJECT_NAME=smoketest | oc create -n {{ projectname }} -f-"
+  when: addjenkins == "true"
+
+

@@ -1,0 +1,66 @@
+# Playbook to create container spaces.
+
+---
+- name: List Role
+  debug: var=rolescfme
+
+- name: OCP ProjectAdmin User Name
+  debug: var=user
+
+- name: OCP Project Name
+  debug: var=projectname
+
+- name: OCP Env
+  debug: var=ocpenv
+
+- name: OCP Root
+  debug: var=root_required
+
+- name: Add Jenkins
+  debug: var=addjenkins
+
+- name: OCPT1 Token
+  debug: var=token_t1
+
+- name: OCPP1 Token
+  debug: var=token_p1
+
+- name: OCPP2
+  debug: var=token_p2
+
+# Not required - playbook will be executed on ocp_bastion host where
+# oc is logged in as system:admin
+#- name: login to OpenShift
+#  shell: "/root/oc login --insecure-skip-tls-verify=true  https://openshift.{{ hailstorm_dns_domain }}/"
+#  shell: "/root/oc login --insecure-skip-tls-verify=true --token=_2weB6JERB70OdFmzfHcBBKv0wjoVxzT-qK3YPwAFXc  https://openshift.{{ hailstorm_dns_domain }}/"
+
+
+
+
+- name: login to OpenShift OCP T1
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_t1 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocpt1.sos.eu"
+
+- name: login to OpenShift OCP P1
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_p1 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocp1.sos.eu"
+
+- name: login to OpenShift OCP P2
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_p2 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocp2.sos.eu"
+
+- name: Trigger Pipeline to Promote to DEV
+  shell: "oc start-build pipeline-promote-to-dev -n {{ projectname }}"
+  when: toocpenv == "dev"
+
+- name: Trigger Pipeline to Promote to UAT
+  shell: "oc start-build pipeline-promote-to-uat -n {{ projectname }}"
+  when: toocpenv == "uat"
+
+- name: Trigger Pipeline to Promote to PRE
+  shell: "oc start-build pipeline-promote-to-pre -n {{ projectname }}"
+  when: toocpenv == "pre"
+
+- name: Trigger Pipeline to Promote to PRO
+  shell: "oc start-build pipeline-promote-to-pro -n {{ projectname }}"
+  when: toocpenv == "pro"

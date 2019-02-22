@@ -1,0 +1,32 @@
+---
+# This playbook deploys the whole application stack in this site.
+- name: Trigguer list of roles sent from Service Dialog using extra_var roles
+  hosts: all
+  environment:
+    ansible_host_key_checking: false
+  remote_user: eugenio
+  vars:
+    cf_user: admin
+    cf_password: smartvm
+    itsg_vault_ipam_password: password
+    itsg_vault_ipam_user: user
+    itsg_ipam_url: ipam.sos.eu
+    itsg_ipam_apiapp: testapp
+    itsg_ipam_subnet_id: 442
+    cf_host_url: https://euicfui01.sos.eu
+    itsg_uid: AP990
+
+  pre_tasks:
+   # - debug: var=vars
+    - name: logging manageiq object
+      debug: var=manageiq
+      when: manageiq is defined
+    - name: List of roles
+      debug: var=rolescfme
+
+  roles:
+    - { role: provision-phpipam-ipaddress }
+    - { role: add_extra_attr_service }
+    - { role: create_service_vmware }
+    - { role: install_application }
+    - { role: add_extra_attr_service, when: '"add_extra_attr_service" in rolescfme.split(",") or "php"  in rolescfme.split(",")' }

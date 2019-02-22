@@ -1,0 +1,37 @@
+# Playbook to create container spaces.
+# Used by App-In-PaaS and Iaas-And-Container
+# Author: Antonio, Daniel
+---
+- name: List Role
+  debug: var=rolescfme
+
+- name: OCP ProjectAdmin User Name
+  debug: var=cfme_user_email
+
+- name: OCP Project Name
+  debug: var=Name
+
+- name: OCP Zone
+  debug: var=Zone
+
+- name: OCP Root
+  debug: var=root_required
+
+# Not required - playbook will be executed on ocp_bastion host where
+# oc is logged in as system:admin
+#- name: login to OpenShift
+#  shell: "/root/oc login --insecure-skip-tls-verify=true  https://openshift.{{ hailstorm_dns_domain }}/"
+#  shell: "/root/oc login --insecure-skip-tls-verify=true --token=_2weB6JERB70OdFmzfHcBBKv0wjoVxzT-qK3YPwAFXc  https://openshift.{{ hailstorm_dns_domain }}/"
+
+- name: Create OpenShift container project
+  shell: "/root/oc new-project {{ Name }}"
+
+- name: assign admin permissions to user
+  shell: "/root/oc adm policy add-role-to-user admin {{ cfme_user_email }} -n {{ Name }}"
+
+- name: assign anyuid to default service account if root requested
+  shell: "/root/oc adm policy add-scc-to-user anyuid -z default -n {{ Name }}"
+  when: root_required  == "true"
+
+- name: Add nodeSelector to project to pin containers to nodes of the requested Zone
+  shell: /root/oc patch namespace {{ Name }} --patch '{ "metadata":{"annotations":{"openshift.io/node-selector":"sddc_zone={{ Zone }}" }}}'

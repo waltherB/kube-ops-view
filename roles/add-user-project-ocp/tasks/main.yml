@@ -1,0 +1,74 @@
+# Playbook to create container spaces.
+---
+
+- name: List Role
+  debug: var=rolescfme
+
+- name: OCP ProjectAdmin User Name
+  debug: var=user
+
+- name: OCP Project Name
+  debug: var=projectname
+
+- name: OCP Env
+  debug: var=ocpenv
+
+- name: OCP Root
+  debug: var=root_required
+
+- name: OCPT1 Token
+  debug: var=token_t1
+
+- name: OCPP1 Token
+  debug: var=token_p1
+
+- name: OCPP2
+  debug: var=token_p2
+
+- name: Role
+  debug: var=ocprole
+
+- name: login to OpenShift OCP T1
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_t1 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocpt1.sos.eu"
+
+- name: login to OpenShift OCP P1
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_p1 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocp1.sos.eu"
+
+- name: login to OpenShift OCP P2
+  shell: "oc login --insecure-skip-tls-verify=true --token={{ token_p2 }}  https://{{ ocpenv }}:8443/"
+  when: ocpenv == "master.ocp2.sos.eu"
+
+- name: Check if the logged user of CFME is admin of the project
+  shell: "oc get rolebindings -n {{ projectname }} -o json"
+  register: rolebindings
+
+#- debug: var=rolebindings.stdout|from_json
+
+#- debug: var=rolebindings
+- set_fact: roles="{{ rolebindings.stdout|from_json }}"
+
+#- name: Debug parsing
+#  debug: msg="{{ item.roleRef.name }}"
+#  with_items: "{{ roles['items'] }}"
+
+#- name: Debug parsing2
+#  debug: var=item.roleRef.name
+#  with_items: "{{ roles['items'] }}"
+
+- name: Test if the logged user from CFME is admin of the project 
+  set_fact: isadmin=True
+  when: item.roleRef.name == 'admin' and item.subjects|selectattr('name','match',user)|list|length
+  with_items: "{{ roles['items'] }}"
+
+- debug: msg="Is {{ user }} admin? {{ isadmin }}"
+
+
+- name: assign normal role permissions to user
+  shell: "oc adm policy add-role-to-user {{ ocprole }} {{ newuser }} -n {{ projectname }}"
+  when: ocprole != "admin"
+
+- name: assign admin role permissions to user only if the CFME user is the admin of the OCP Project
+  shell: "oc adm policy add-role-to-user {{ ocprole }} {{ newuser }} -n {{ projectname }}"
+  when: isadmin == true and ocprole == "admin"
